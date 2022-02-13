@@ -12,10 +12,10 @@ d2l.use_svg_display()
 
 trans = transforms.ToTensor()
 #下载训练数据集
-mnist_train = torchvision.datasets.FashionMNIST(root = "/Users/crpdim/Desktop/Deep-Learn/data",
+mnist_train = torchvision.datasets.FashionMNIST(root = "/data",
                             train = True,transform=trans,download=True)
 #下载测试数据集，用来验证模型好坏
-mnist_test = torchvision.datasets.FashionMNIST(root = "/Users/crpdim/Desktop/Deep-Learn/data",train = False,
+mnist_test = torchvision.datasets.FashionMNIST(root = "/data",train = False,
                                     transform=trans,download=True)
 
 print(mnist_train[0][0].shape)
@@ -77,75 +77,87 @@ def load_data_fashion_mnist(batch_size, resize=None):  #@save
 import torch
 from IPython import display
 from d2l import torch as d2l
-batch_size = 256
+
+
+batch_size = 256    #设置数据迭代器的批量大小为256
 train_iter, test_iter = d2l.load_data_fashion_mnist(batch_size) #读取训练数据和预测数据
 
-num_input = 784
-num_outputs = 10
+num_input = 784     #数据集中的每个样本都是28×28的图像，我们将展平每个图像，把它们看作长度为784的向量。
+num_outputs = 10    #数据集有10个类别，所以网络输出维度为10
 
-W = torch.normal(0, 0.1, size = (num_input, num_outputs), requires_grad = True) #权重 
-b = torch.zeros(num_outputs, requires_grad = True) #偏移
+W = torch.normal(0, 0.1, size = (num_input, num_outputs), requires_grad = True) #权重将构成一个784×10的矩阵
+b = torch.zeros(num_outputs, requires_grad = True) #偏置将构成一个1×10的行向量
 
-
-X = torch.tensor([[1.0,2.0,3.0],[4.0,5.0,6.0]])
+"""#定义softmax操作"""
+#实现softmax由三个步骤组成：
+#对每个项求幂（使用exp）；
+#对每一行求和（小批量中每个样本是一行），得到每个样本的规范化常数；
+#将每一行除以其规范化常数，确保结果的和为1。
 def softmax(X):
-    X_exp = torch.exp(X)  #对每个元素做指数运算
-    partition = X_exp.sum(1, keepdim = True) #对每一行求和
-    return X_exp / partition #对每一行
-
+    X_exp = torch.exp(X)                        #对每个元素做指数运算
+    partition = X_exp.sum(1, keepdim = True)    #对每一行求和
+    return X_exp / partition                    #利用广播机制将每一行除以其规范化常数，确保结果的和为1。
+# 测试数据，对于随即输入，概率总和为1
 # x = torch.normal(0, 1, (2, 5))
 # x_prob = softmax(x)
 # print(x_prob,x_prob.sum(1))
+
+"""定义模型"""
 def net(X):
-    return softmax(torch.matmul(X.reshape((-1,W.shape[0])),W) + b)
+    return softmax(torch.matmul(X.reshape((-1,W.shape[0])),W) + b)#将数据传递到模型之前，使用reshape函数将每张原始图像展平为向量。
 
 y = torch.tensor([0, 2])
 y_hat = torch.tensor([[0.1,0.3,0.6],[0.3,0.2,0.5]])
 print(y_hat[[0, 1], y])
 
-#交叉熵损失函数
+"""定义交叉熵损失函数"""
 def cross_entropy(y_hat, y):
     return -torch.log(y_hat[range(len(y_hat)), y])
 
-
-##计算预测正确的数量
+#计算预测正确的数量
 def accuracy(y_hat, y):
     if len(y_hat) > 1 and y_hat.shape[1] > 1:
-        y_hat = y_hat.argmax(axis = 1)
-    cmp = y_hat.type(y.dtype) == y
-    return float(cmp.type(y.dtype).sum())
+        y_hat = y_hat.argmax(axis = 1)      #使用argmax获得每行中最大元素的索引来获得预测类别
+    cmp = y_hat.type(y.dtype) == y          #将y_hat的数据类型转换为与y的数据类型一致
+    return float(cmp.type(y.dtype).sum())   #返回一个包含0（错）和1（对）的张量
 
 #计算指定数据集上模型的精度
 def evaluate_accuracy(net, data_iter):
     if isinstance(net, torch.nn.Module):
         net.eval()#将模型设置为评估模式
     metric = Accumulator(2) #正确预测数、总数
+    # 在Accumulator实例中创建了2个变量，
+    # 分别用于存储正确预测的数量和预测的总数量。
+    # 当遍历数据集时，两者都将随着时间的推移而累加。
     for X, y in data_iter:
         metric.add(accuracy(net(X), y), y.numel())
     return metric[0] / metric[1] ##分类正确样本数/总样本数
 
-class Accumulator:  #@save
-    """在n个变量上累加"""
+"""定义一个实用程序类Accumulator，用于对多个变量进行累加"""
+class Accumulator:  
+    #在n个变量上累加
     def __init__(self, n):
         self.data = [0.0] * n
-
     def add(self, *args):
         self.data = [a + float(b) for a, b in zip(self.data, args)]
-
     def reset(self):
         self.data = [0.0] * len(self.data)
-
     def __getitem__(self, idx):
         return self.data[idx]
-#实现训练脚本
+
+"""定义实现训练脚本"""
 def train_epoch_ch3(net, train_iter, loss, updater):
+    # 将模型设置为训练模式
     if isinstance(net, torch.nn.Module):
         net.train()
     metric = Accumulator(3)
+    # 训练损失总和、训练准确度总和、样本数
     for X, y in train_iter:
+        # 计算梯度并更新参数
         y_hat = net(X)
         l = loss(y_hat, y)
         if isinstance(updater,torch.optim.Optimizer):
+            # 使用PyTorch内置的优化器和损失函数
             updater.zero_grad()
             l.backward()
             updater.step()
@@ -154,12 +166,14 @@ def train_epoch_ch3(net, train_iter, loss, updater):
                 y.size().numel()
             )
         else:
+            # 使用定制的优化器和损失函数
             l.sum().backward()
             updater(X.shape[0])
             metric.add(float(l.sum()), accuracy(y_hat, y), y.numel())
+    # 返回训练损失和训练精度
     return metric[0]/metric[2], metric[1] / metric[2]
-class Animator:  #@save
-    """在动画中绘制数据"""
+"""展示训练过程"""
+class Animator: 
     def __init__(self, xlabel=None, ylabel=None, legend=None, xlim=None,
                  ylim=None, xscale='linear', yscale='linear',
                  fmts=('-', 'm--', 'g-.', 'r:'), nrows=1, ncols=1,
@@ -199,14 +213,15 @@ class Animator:  #@save
         d2l.plt.draw()
         display.clear_output(wait=True)
 
-#训练函数
-def train_ch3(net, train_iter, test_iter, loss, num_epochs, updater):  #@save
-    """训练模型"""
-    animator = Animator(xlabel='epoch', xlim=[1, num_epochs], ylim=[0.3, 0.9],
-                        legend=['train loss', 'train acc', 'test acc'])
-    for epoch in range(num_epochs):
+"""训练函数，在train_iter访问到的训练数据集上训练一个模型net。
+该训练函数将会运行多个迭代周期（由num_epochs指定）。
+在每个迭代周期结束时，利用test_iter访问到的测试数据集对模型进行评估"""
+def train_ch3(net, train_iter, test_iter, loss, num_epochs, updater):  
+    animator = Animator(xlabel='epoch', xlim=[1, num_epochs], ylim=[0.3, 0.9], 
+                        legend=['train loss', 'train acc', 'test acc'])     #绘图
+    for epoch in range(num_epochs): #在多个迭代周期中
         train_metrics = train_epoch_ch3(net, train_iter, loss, updater)
-        test_acc = evaluate_accuracy(net, test_iter)
+        test_acc = evaluate_accuracy(net, test_iter)    #评估模型精度
         animator.add(epoch + 1, train_metrics + (test_acc,))
     train_loss, train_acc = train_metrics
     assert train_loss < 0.5, train_loss
@@ -217,12 +232,12 @@ lr = 0.1 #学习率
 
 def updater(batch_size):
     return d2l.sgd([W, b], lr, batch_size)
-num_epochs = 10
-# train_ch3(net, train_iter, test_iter, cross_entropy, num_epochs, updater)
 
-##预测
+num_epochs = 10
+train_ch3(net, train_iter, test_iter, cross_entropy, num_epochs, updater)
+
+#预测函数
 def predict_ch3(net, test_iter, n=6):  #@save
-    """预测标签（定义见第3章）"""
     for X, y in test_iter:
         break
     trues = d2l.get_fashion_mnist_labels(y)
@@ -231,28 +246,28 @@ def predict_ch3(net, test_iter, n=6):  #@save
     d2l.show_images(
         X[0:n].reshape((n, 28, 28)), 1, n, titles=titles[0:n])
 
-# predict_ch3(net, test_iter)
+predict_ch3(net, test_iter)#进行预测并输出结果
 
 
 
 #softmax简洁实现
 
-import torch
-from torch import nn
-from d2l import torch as d2l
+# import torch
+# from torch import nn
+# from d2l import torch as d2l
 
-batch_size = 256
-train_iter, test_iter = d2l.load_data_fashion_mnist(batch_size)
-#定义展平层，在线性层前调整网络输入形状
-net = nn.Sequential(nn.Flatten(), nn.Linear(784,10))#输入784，输出10
+# batch_size = 256
+# train_iter, test_iter = d2l.load_data_fashion_mnist(batch_size)
+# #定义展平层，在线性层前调整网络输入形状
+# net = nn.Sequential(nn.Flatten(), nn.Linear(784,10))#输入784，输出10
 
-def init_weights(m): 
-    if type(m) == nn.Linear:
-        nn.init.normal_(m.weight, std = 0.1)
-net.apply(init_weights)
-#损失函数
-loss = nn.CrossEntropyLoss()
-#小批量梯度下降优化算法
-trainer = torch.optim.SGD(net.parameters(),lr=  0.1)
-num_epochs = 10
-d2l.train_ch3(net, train_iter, test_iter, loss, num_epochs,trainer)
+# def init_weights(m): 
+#     if type(m) == nn.Linear:
+#         nn.init.normal_(m.weight, std = 0.1)
+# net.apply(init_weights)
+# #损失函数
+# loss = nn.CrossEntropyLoss()
+# #小批量梯度下降优化算法
+# trainer = torch.optim.SGD(net.parameters(),lr=  0.1)
+# num_epochs = 10
+# d2l.train_ch3(net, train_iter, test_iter, loss, num_epochs,trainer)
